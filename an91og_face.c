@@ -164,28 +164,55 @@ void an91og_face_setup(movement_settings_t *settings, uint8_t watch_face_index, 
 }
 
 void an91og_face_activate(movement_settings_t *settings, void *context) {
-    (void) context;
+    ep_analog_state_t *state = (ep_analog_state_t *)context;
     if (watch_tick_animation_is_running()) watch_stop_tick_animation();
-    movement_request_tick_frequency(4);
+    movement_request_tick_frequency(1);
+    state->last_minute = 0xFF;
+    state->needs_high_freq = false;
 }
 
 bool an91og_face_loop(movement_event_t event, movement_settings_t *settings, void *context) {
-    (void) context;
+    ep_analog_state_t *state = (ep_analog_state_t *)context;
     
     switch (event.event_type) {
         case EVENT_ACTIVATE:
         case EVENT_TICK: {
-            watch_clear_display();
-            // blink colon once per second at 4 Hz ticks
-            if (event.subsecond % 4 == 0) watch_set_colon();
-            else watch_clear_colon();
-            
-            // Show hour ring + minute indicator
             watch_date_time now = watch_rtc_get_date_time();
-            uint8_t hour_now = now.unit.hour % 12; // 0..11, where 0=12
-            render_hour_ring(hour_now, event.subsecond, true);
-            // Blink minute indicators in sync with the colon (~1 Hz at 4 Hz ticks):
-            bool minute_visible = (event.subsecond % 4 == 0);
+            uint8_t hour_now = now.unit.hour % 12;
+            
+            // Check if we need high frequency for blinking using bit mask for efficiency
+            // Hours that need blinking: 1,2,3,4,5,8,9,10
+            uint16_t blink_mask = 0x073E; // Binary: 0000 0111 0011 1110 (bits 1-5, 8-10)
+            bool should_blink = (blink_mask & (1 << hour_now)) != 0;
+            
+            // Switch frequency if needed
+            if (should_blink != state->needs_high_freq) {
+                movement_request_tick_frequency(should_blink ? 4 : 1);
+                state->needs_high_freq = should_blink;
+            }
+            
+            // Only clear ring when minute changes (minute indicator moves)
+            // Don't clear during blinking to avoid flicker
+            if (now.unit.minute != state->last_minute) {
+                state->last_minute = now.unit.minute;
+                clear_outline_all_digits();  // Only clear the ring, not entire display
+            }
+            
+            // Handle colon blink
+            if (state->needs_high_freq) {
+                if (event.subsecond % 4 == 0) watch_set_colon();
+                else watch_clear_colon();
+            } else {
+                // 1Hz mode: simple toggle
+                if ((now.unit.second & 1) == 0) watch_set_colon();
+                else watch_clear_colon();
+            }
+            
+            // Render hour ring with blinking support
+            render_hour_ring(hour_now, state->needs_high_freq ? event.subsecond : 0, state->needs_high_freq);
+            
+            // Blink minute indicators
+            bool minute_visible = state->needs_high_freq ? (event.subsecond % 4 == 0) : ((now.unit.second & 1) == 0);
             render_minute_indicator(now.unit.minute, minute_visible);
             
             break;

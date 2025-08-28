@@ -28,7 +28,8 @@
 #include "movement.h"
 
 typedef struct {
-    // No state needed for this watch face
+    uint8_t last_minute;
+    bool needs_high_freq;
 } ep_analog_state_t;
 
 void an91og_face_setup(movement_settings_t *settings, uint8_t watch_face_index, void ** context_ptr);
